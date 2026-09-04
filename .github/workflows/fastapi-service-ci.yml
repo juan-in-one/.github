@@ -10,8 +10,8 @@ on:
       service_name:
         description: >
           Nombre del servicio, en snake_case (ej. "car_api", "sport_api").
-          Se usa para las credenciales de Postgres y en los nombres de los
-          pasos del job de DAST.
+          Se usa para las credenciales de Postgres en los jobs de test y
+          dast.
         required: true
         type: string
 
@@ -48,8 +48,45 @@ jobs:
       - name: Ruff — comprobar formato
         run: ruff format --check app/
 
+  test:
+    # Job aparte, igual que dast: necesita su propio Postgres real (los
+    # modelos usan tipos específicos de Postgres, no vale una alternativa más
+    # ligera) y las dependencias completas de la app, no solo Ruff — por eso
+    # no comparte job con lint, que es mucho más rápido sin nada de esto.
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ inputs.service_name }}
+          POSTGRES_PASSWORD: ${{ inputs.service_name }}
+          POSTGRES_DB: ${{ inputs.service_name }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.service_name }}"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias (app + test)
+        run: pip install --quiet -r requirements-check.txt
+
+      - name: pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://${{ inputs.service_name }}:${{ inputs.service_name }}@localhost:5432/${{ inputs.service_name }}
+        run: pytest -v
+
   build-and-push:
-    needs: lint # si el lint falla, no se llega a construir ni publicar la imagen
+    needs: [lint, test] # si el lint o los tests fallan, no se construye ni publica la imagen
     runs-on: ubuntu-latest
     steps:
       - name: Descargar el código del repo
