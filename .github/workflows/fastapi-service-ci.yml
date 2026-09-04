@@ -1,0 +1,168 @@
+name: FastAPI service CI
+
+# "workflow_call" es lo que convierte esto en un workflow reutilizable: no se
+# dispara solo por push/PR, solo cuando otro repo lo llama explícitamente con
+# "uses:". Los repos que lo llaman (car-api, sport-api) siguen teniendo su
+# propio trigger de push/pull_request — este archivo solo contiene los pasos.
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: >
+          Nombre del servicio, en snake_case (ej. "car_api", "sport_api").
+          Se usa para las credenciales de Postgres y en los nombres de los
+          pasos del job de DAST.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # se resuelve al repo que llama (ej. "juan-in-one/car-api")
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Trivy — escaneo de configuración (Dockerfile + chart de Helm)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          output: trivy-config.txt
+          exit-code: "0" # no bloquea main todavía, ver wiki/projects/juan-in-one.md
+
+      - name: Volcar hallazgos de configuración al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🛡️ Trivy — configuración (Dockerfile + chart)"
+            echo '```'
+            cat trivy-config.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Semgrep — análisis estático del código (SAST)
+        run: |
+          pip install --quiet semgrep
+          semgrep scan \
+            --config p/security-audit \
+            --config p/python \
+            --text --output semgrep.txt \
+            app/
+
+      - name: Volcar hallazgos de Semgrep al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🔎 Semgrep — análisis estático del código (SAST)"
+            echo '```'
+            cat semgrep.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Autenticarse en GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calcular etiquetas de la imagen
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Construir y publicar la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Trivy — escaneo de vulnerabilidades de la imagen
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          format: table
+          output: trivy-image.txt
+          exit-code: "0"
+
+      - name: Volcar hallazgos de la imagen al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🛡️ Trivy — vulnerabilidades de la imagen"
+            echo '```'
+            cat trivy-image.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dast:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ inputs.service_name }}
+          POSTGRES_PASSWORD: ${{ inputs.service_name }}
+          POSTGRES_DB: ${{ inputs.service_name }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.service_name }}"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install --quiet -r requirements.txt
+
+      - name: Arrancar la app en segundo plano
+        env:
+          DATABASE_URL: postgresql+asyncpg://${{ inputs.service_name }}:${{ inputs.service_name }}@localhost:5432/${{ inputs.service_name }}
+        run: |
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+
+      - name: OWASP ZAP — DAST (baseline scan)
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: "http://localhost:8000/docs"
+          cmd_options: "-a"
+          fail_action: false
+          allow_issue_writing: false
+
+      - name: Volcar hallazgos de ZAP al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🕷️ OWASP ZAP — DAST (baseline)"
+            if [ -f report_md.md ]; then cat report_md.md; else echo "(sin informe generado)"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
