@@ -24,6 +24,30 @@ env:
   IMAGE_NAME: ${{ github.repository }} # se resuelve al repo que llama (ej. "juan-in-one/car-api")
 
 jobs:
+  lint:
+    # Job aparte y rápido: no depende de build-and-push ni de dast, corre en
+    # paralelo. A diferencia de los escaneos de seguridad (informativos por
+    # ahora), este si bloquea: arreglar un aviso de Ruff es barato, no hace
+    # falta la misma cautela que con las 186 CVEs pendientes de triar.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar Ruff
+        run: pip install --quiet -r requirements-check.txt
+
+      - name: Ruff — lint
+        run: ruff check app/
+
+      - name: Ruff — comprobar formato
+        run: ruff format --check app/
+
   build-and-push:
     runs-on: ubuntu-latest
     steps:
