@@ -49,6 +49,7 @@ jobs:
         run: ruff format --check app/
 
   build-and-push:
+    needs: lint # si el lint falla, no se llega a construir ni publicar la imagen
     runs-on: ubuntu-latest
     steps:
       - name: Descargar el código del repo
