@@ -22,13 +22,14 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }} # se resuelve al repo que llama (ej. "juan-in-one/car-api")
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256_LINUX_X64: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 jobs:
   lint:
     # Job aparte y rápido: no depende de build-and-push ni de dast, corre en
-    # paralelo. A diferencia de los escaneos de seguridad (informativos por
-    # ahora), este si bloquea: arreglar un aviso de Ruff es barato, no hace
-    # falta la misma cautela que con las 186 CVEs pendientes de triar.
+    # paralelo. Arreglar un aviso de Ruff es barato — bloquea igual que los
+    # escaneos de seguridad, que ahora también bloquean (ver más abajo).
     runs-on: ubuntu-latest
     steps:
       - name: Descargar el código del repo
@@ -85,8 +86,38 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://${{ inputs.service_name }}:${{ inputs.service_name }}@localhost:5432/${{ inputs.service_name }}
         run: pytest -v
 
+  secrets-scan:
+    # Job aparte y rápido, en paralelo con lint/test: busca credenciales
+    # filtradas (tokens, contraseñas, claves privadas) en todo el historial
+    # de git del repo, no solo en el commit actual — así detecta también un
+    # secreto que se subiera y se "borrara" después en un commit posterior,
+    # que seguiría recuperable del historial.
+    # Se usa el binario oficial de Gitleaks (MIT, open source) en vez de la
+    # Action empaquetada "gitleaks/gitleaks-action": esa Action exige
+    # licencia de pago para repos privados, el binario en sí no.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo (con historial completo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instalar Gitleaks (versión fija, checksum verificado)
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256_LINUX_X64}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Gitleaks — detección de secretos en todo el historial
+        # --redact evita que un secreto real encontrado se imprima en claro
+        # en los logs del job (que son visibles para cualquiera con acceso
+        # al repo) — solo se indica dónde está, no su valor.
+        run: gitleaks detect --source . --redact -v
+
   build-and-push:
-    needs: [lint, test] # si el lint o los tests fallan, no se construye ni publica la imagen
+    needs: [lint, test, secrets-scan] # si cualquiera de los tres falla, no se construye ni publica nada
     runs-on: ubuntu-latest
     steps:
       - name: Descargar el código del repo
@@ -99,7 +130,8 @@ jobs:
           scan-ref: .
           format: table
           output: trivy-config.txt
-          exit-code: "0" # no bloquea main todavía, ver wiki/projects/juan-in-one.md
+          severity: CRITICAL,HIGH
+          exit-code: "1" # bloquea: un fallo de configuración lo puede arreglar quien escribe el Dockerfile/chart
 
       - name: Volcar hallazgos de configuración al resumen del job
         if: always()
@@ -118,6 +150,7 @@ jobs:
             --config p/security-audit \
             --config p/python \
             --text --output semgrep.txt \
+            --error \
             app/
 
       - name: Volcar hallazgos de Semgrep al resumen del job
@@ -130,14 +163,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Autenticarse en GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Calcular etiquetas de la imagen
         id: meta
         uses: docker/metadata-action@v5
@@ -147,11 +172,18 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Construir y publicar la imagen
+      - name: Construir la imagen (sin publicar todavía)
+        # push:false a propósito: la imagen se escanea con Trivy ANTES de
+        # publicarse. Antes este paso publicaba directamente en el mismo
+        # build, así que una imagen con vulnerabilidades ya estaba en GHCR
+        # para cuando el escaneo posterior fallaba — el escaneo bloqueaba la
+        # ejecución, pero no evitaba nada real. Ahora "load:true" la deja
+        # cargada en el Docker local del runner para poder escanearla, y solo
+        # se publica en un paso aparte al final si todo ha pasado.
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: false
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -163,7 +195,15 @@ jobs:
           image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           format: table
           output: trivy-image.txt
-          exit-code: "0"
+          severity: CRITICAL,HIGH
+          # ignore-unfixed: bloquear por una CVE sin parche disponible no
+          # arregla nada, solo deja la pipeline en rojo para siempre (ver
+          # wiki/projects/juan-in-one.md — caso real: 3 CRITICAL de
+          # perl-base en la imagen base de Debian, sin parche, resueltas
+          # eliminando el paquete en vez de esperar a Debian). Solo bloquea
+          # una CRITICAL/HIGH que SÍ se puede arreglar actualizando algo.
+          ignore-unfixed: "true"
+          exit-code: "1"
 
       - name: Volcar hallazgos de la imagen al resumen del job
         if: always()
@@ -174,6 +214,21 @@ jobs:
             cat trivy-image.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Autenticarse en GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar la imagen (solo si los escaneos anteriores han pasado)
+        if: github.event_name == 'push'
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && docker push "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
 
   dast:
     runs-on: ubuntu-latest
@@ -217,8 +272,13 @@ jobs:
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: "http://localhost:8000/docs"
-          cmd_options: "-a"
-          fail_action: false
+          # -I: solo bloquea por un hallazgo FAIL de verdad (ej. inyección),
+          # no por los WARN de cabeceras de seguridad recomendadas (CSP,
+          # X-Content-Type-Options, etc.) — esas 10 siguen saliendo en el
+          # resumen como pendiente de mejora, pero no impiden desplegar.
+          # Comprobado en local: hoy 0 FAIL / 10 WARN en las 3 APIs.
+          cmd_options: "-a -I"
+          fail_action: true
           allow_issue_writing: false
 
       - name: Volcar hallazgos de ZAP al resumen del job
