@@ -18,12 +18,22 @@ on:
 permissions:
   contents: read
   packages: write
+  # Necesario para la firma "keyless" de Cosign: sin esto GitHub no emite el
+  # token OIDC con el que Cosign certifica la identidad del workflow ante
+  # Sigstore/Fulcio (nada de clave privada que gestionar). Para un workflow
+  # reutilizable esto solo tiene efecto si el que lo llama (ci.yml de cada
+  # repo) también lo concede en su propio bloque "permissions" del job — el
+  # de aquí es el techo, no basta por sí solo.
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }} # se resuelve al repo que llama (ej. "juan-in-one/car-api")
   GITLEAKS_VERSION: "8.30.1"
   GITLEAKS_SHA256_LINUX_X64: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  SYFT_VERSION: "1.51.1"
+  SYFT_SHA256_LINUX_AMD64: "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+  COSIGN_VERSION: "v3.1.3"
 
 jobs:
   lint:
@@ -229,6 +239,51 @@ jobs:
           while IFS= read -r tag; do
             [ -n "$tag" ] && docker push "$tag"
           done <<< "${{ steps.meta.outputs.tags }}"
+
+      - name: Obtener el digest real ya publicado en el registro
+        # Firmar/atestar por digest (no por tag) porque un tag es mutable
+        # ("latest" cambia de imagen con cada build) y el digest no — es lo
+        # que Kyverno comprobará después en el clúster.
+        if: github.event_name == 'push'
+        id: digest
+        run: |
+          tag=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          digest=$(docker buildx imagetools inspect "$tag" | awk '/^Digest:/ {print $2; exit}')
+          echo "image_ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar Cosign
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Instalar Syft (SBOM), versión fija y checksum verificado
+        if: github.event_name == 'push'
+        run: |
+          curl -sSL -o syft.tar.gz \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256_LINUX_AMD64}  syft.tar.gz" | sha256sum -c -
+          tar -xzf syft.tar.gz syft
+          sudo mv syft /usr/local/bin/syft
+
+      - name: Cosign — firmar la imagen (keyless, vía OIDC de GitHub Actions)
+        # Sin clave privada que gestionar ni guardar como secreto: Cosign
+        # pide un token OIDC de este job (permiso id-token:write) y Sigstore
+        # (Fulcio) emite un certificado de corta duración que ata la firma a
+        # "este workflow, en este repo, en este commit" — verificable después
+        # sin más que consultar Rekor (el registro público de transparencia).
+        if: github.event_name == 'push'
+        run: cosign sign --yes "${{ steps.digest.outputs.image_ref }}"
+
+      - name: Syft — generar el SBOM de la imagen
+        if: github.event_name == 'push'
+        run: |
+          tag=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          syft "docker:${tag}" -o cyclonedx-json=sbom.json
+
+      - name: Cosign — adjuntar el SBOM como attestation firmada
+        if: github.event_name == 'push'
+        run: cosign attest --yes --predicate sbom.json --type cyclonedx "${{ steps.digest.outputs.image_ref }}"
 
   dast:
     runs-on: ubuntu-latest
