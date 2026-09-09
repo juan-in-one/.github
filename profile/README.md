@@ -99,13 +99,31 @@ A single ingress host fans out by path prefix. The front end only ever calls rel
 
 ## Supply chain
 
-Every image travels through the same pipeline, and the cluster verifies the result before it runs anything.
+Two workflows, and they never run at the same time. Opening a PR validates it; only a merge to `main` can publish anything.
 
 ```mermaid
 flowchart LR
-    push["git push"] --> gate
+    pr["Pull request<br/>from a feat/* branch"] --> checks
 
-    subgraph gate["CI — all of these block"]
+    subgraph checks["pr-checks — no step in this file can publish anything"]
+        direction TB
+        a["branch-name<br/>enforces feat/*"] --> b["lint"]
+        b --> c["secrets-scan<br/>Gitleaks, full history"]
+        c --> d["dependency-review<br/>new deps only"]
+        d --> e["build-sanity<br/>build + Trivy — no GHCR login anywhere in the file"]
+        e --> f["coverage<br/>pytest, commented on the PR"]
+    end
+
+    checks -->|"all green"| ready["Merge allowed"]
+```
+
+Merging is the only thing that triggers the real delivery pipeline:
+
+```mermaid
+flowchart LR
+    push["Merge to main"] --> gate
+
+    subgraph gate["ci — all of these block"]
         direction TB
         a["Ruff"] --> b["pytest<br/>real Postgres"]
         b --> c["Gitleaks<br/>full history"]
@@ -139,7 +157,7 @@ An attacker who steals a registry token can still push an image. They cannot mak
   <img src="img/ci-jobs.png" alt="CI job graph" width="700">
 </p>
 
-<p align="center"><i>Lint, tests and secret scanning run in parallel; <code>build-and-push</code> starts only if all three pass. DAST runs alongside, against the app booted with a real Postgres.</i></p>
+<p align="center"><i>The <code>ci</code> job graph, on merge to <code>main</code>: lint, tests and secret scanning run in parallel; <code>build-and-push</code> starts only if all three pass. DAST runs alongside, against the app booted with a real Postgres.</i></p>
 
 ![build-and-push steps](img/ci-build-and-push.png)
 
@@ -228,6 +246,16 @@ Getting there also required three attempts at registry authentication: RBAC on t
 The CEL engine enables `mutateDigest` by default, rewriting the Deployment's image to its resolved digest at admission time. That is a genuinely useful feature — and it put car-api into permanent `OutOfSync` without a single commit to the GitOps repo, because Git said `sha-61c886a` and the cluster said `@sha256:...`.
 
 It is switched off, with the reason recorded next to it. Two good practices in direct conflict, resolved in favour of GitOps consistency; mutable tags are handled instead by deploying immutable per-commit tags.
+</details>
+
+<details>
+<summary><b>PR-time and merge-time are two separate files, not one workflow with an <code>if</code></b></summary>
+
+The first version had one reusable workflow listening to both `push` and `pull_request`, with the publish/sign steps gated behind `if: github.event_name == 'push'`. It worked, but every PR page showed a job called `ci` that could never actually publish anything — confusing, and it duplicated what a dedicated PR-checks job already covered.
+
+`ci.yml` now triggers only on push to `main`; `pr-checks.yml` only on `pull_request`. Verified with a real PR (only `pr-checks` runs, `ci` shows as `skipping`) and a real merge straight after (the reverse, `pr-checks` shows as `skipped`). `pr-checks` absorbed lint, Gitleaks and a build-and-scan sanity job with no GHCR login step anywhere in the file — not disabled by a condition, structurally unable to publish.
+
+Wiring up the PR-time coverage job surfaced three unrelated real bugs, in order: `python-coverage-comment-action` needs `contents: write`, not just `pull-requests: write`, to store its history on an orphan branch — the error it throws for this is a generic, misleading "permissions" message; `coverage.py` needs `relative_files = true` in `pyproject.toml` or the action cannot read its own report; and GitHub's Dependency Review Action needs `vulnerability-alerts` explicitly enabled per repository — not bundled with making a repo public, and not the same setting as Secret Scanning or Dependabot updates.
 </details>
 
 <details>
