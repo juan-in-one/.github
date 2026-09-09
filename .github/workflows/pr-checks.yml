@@ -17,7 +17,11 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # contents:write, no solo read: python-coverage-comment-action guarda el
+  # histórico de cobertura en una rama huérfana propia
+  # (python-coverage-comment-action-data) para poder comparar contra la
+  # rama base — sin esto falla con un error de permisos poco descriptivo.
+  contents: write
   pull-requests: write
 
 jobs:
