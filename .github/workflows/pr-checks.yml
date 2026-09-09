@@ -1,18 +1,18 @@
 name: PR checks
 
-# Deliberadamente separado de fastapi-service-ci.yml: ese workflow es el
-# pipeline de entrega (build, escaneos que bloquean, firma, publicación) y
-# ya corre tanto en push como en PR. Este es solo para la PR — comprobaciones
-# que no tienen sentido fuera de una PR (comparar contra la rama base, o
-# exigir una convención de nombre de rama) y que no deberían mezclarse con
-# el pipeline que de verdad despliega.
+# Todo lo que tiene sentido validar ANTES de fusionar — lint, tests,
+# secretos, y un build+escaneo de prueba. Deliberadamente separado de
+# fastapi-service-ci.yml, que ahora dispara solo con push a main (la CD de
+# verdad: publicar, firmar, SBOM). Aquí no hay ni login a GHCR ni paso de
+# publicar en ningún sitio del archivo — no es que esté desactivado por una
+# condición, es que no existe la posibilidad de que se suba nada.
 on:
   workflow_call:
     inputs:
       service_name:
         description: >
           Nombre del servicio, en snake_case (ej. "car_api"). Se usa para
-          las credenciales de Postgres en el job de cobertura.
+          las credenciales de Postgres en los jobs de test/build-sanity.
         required: true
         type: string
 
@@ -23,6 +23,10 @@ permissions:
   # rama base — sin esto falla con un error de permisos poco descriptivo.
   contents: write
   pull-requests: write
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256_LINUX_X64: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 jobs:
   branch-name:
@@ -40,11 +44,40 @@ jobs:
           fi
           echo "OK: '${{ github.head_ref }}' sigue la convención."
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar Ruff
+        run: pip install --quiet -r requirements-check.txt
+      - name: Ruff — lint
+        run: ruff check app/
+      - name: Ruff — comprobar formato
+        run: ruff format --check app/
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo (con historial completo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Instalar Gitleaks (versión fija, checksum verificado)
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256_LINUX_X64}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+      - name: Gitleaks — detección de secretos en todo el historial
+        run: gitleaks detect --source . --redact -v
+
   dependency-review:
-    # Solo tiene sentido en una PR: compara las dependencias añadidas en el
-    # diff contra la rama base y bloquea si alguna trae una vulnerabilidad
-    # conocida — el escaneo de imagen (Trivy) ya cubre esto para lo que
-    # queda en la imagen final, esto cubre el momento en que se introduce.
     runs-on: ubuntu-latest
     steps:
       - name: Descargar el código del repo
@@ -53,6 +86,89 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
+
+  build-sanity:
+    # "¿Esto pasaría los mismos escaneos que la CD real?" — sin login a
+    # GHCR, sin Cosign, sin ningún paso capaz de publicar nada. Si esto
+    # pasa aquí, el build-and-push de main no debería sorprender a nadie.
+    needs: [lint, secrets-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Trivy — escaneo de configuración (Dockerfile + chart de Helm)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          output: trivy-config.txt
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      - name: Volcar hallazgos de configuración al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🛡️ Trivy — configuración (Dockerfile + chart)"
+            echo '```'
+            cat trivy-config.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Semgrep — análisis estático del código (SAST)
+        run: |
+          pip install --quiet semgrep
+          semgrep scan \
+            --config p/security-audit \
+            --config p/python \
+            --text --output semgrep.txt \
+            --error \
+            app/
+
+      - name: Volcar hallazgos de Semgrep al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🔎 Semgrep — análisis estático del código (SAST)"
+            echo '```'
+            cat semgrep.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Calcular una etiqueta de prueba (nunca se publica)
+        id: meta
+        run: echo "tag=pr-sanity-check:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Construir la imagen (sin publicar — no hay ni login a GHCR en este workflow)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tag }}
+
+      - name: Trivy — escaneo de vulnerabilidades de la imagen
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.meta.outputs.tag }}
+          format: table
+          output: trivy-image.txt
+          severity: CRITICAL,HIGH
+          ignore-unfixed: "true"
+          exit-code: "1"
+
+      - name: Volcar hallazgos de la imagen al resumen del job
+        if: always()
+        run: |
+          {
+            echo "## 🛡️ Trivy — vulnerabilidades de la imagen"
+            echo '```'
+            cat trivy-image.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   coverage:
     runs-on: ubuntu-latest
