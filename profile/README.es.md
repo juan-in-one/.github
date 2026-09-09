@@ -73,6 +73,34 @@ Un único host de ingress reparte por prefijo de ruta. El front siempre llama a 
 
 ---
 
+## Acceso
+
+Todo se sirve desde un único host de ingress-nginx, resuelto en local a través de `/etc/hosts`:
+
+```
+<IP_DEL_INGRESS>  juan-in-one.local
+<IP_DEL_INGRESS>  argocd.juan-in-one.local
+```
+
+`<IP_DEL_INGRESS>` es la dirección que OrbStack asigna al LoadBalancer de ingress-nginx — `kubectl get svc -n ingress-nginx` la devuelve.
+
+![IP del LoadBalancer de ingress y entradas del hosts](img/ingress-hosts.png)
+
+<p align="center"><i>La misma dirección en los dos sitios: la <code>EXTERNAL-IP</code> del Service de ingress-nginx, y las dos entradas de <code>/etc/hosts</code> que apuntan los dominios locales hacia ella.</i></p>
+
+| URL | Qué sirve |
+|---|---|
+| `http://juan-in-one.local/` | El front |
+| `http://juan-in-one.local/api/car-api/` | car-api |
+| `http://juan-in-one.local/api/sport-api/` | sport-api |
+| `http://juan-in-one.local/api/academy-api/` | academy-api |
+| `http://juan-in-one.local/grafana/` | Grafana |
+| `http://argocd.juan-in-one.local/` | Argo CD |
+
+Las aplicaciones comparten un único host y se reparten por prefijo de ruta, que es lo que mantiene al front en URLs relativas y fuera del CORS por completo. Argo CD tiene su propio subdominio porque es herramienta de plataforma, no parte del producto.
+
+---
+
 ## Repositorios
 
 | Repositorio | Qué es |

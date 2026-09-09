@@ -74,6 +74,34 @@ A single ingress host fans out by path prefix. The front end only ever calls rel
 
 ---
 
+## Access
+
+Everything is served by a single ingress-nginx host, resolved locally through `/etc/hosts`:
+
+```
+<INGRESS_IP>  juan-in-one.local
+<INGRESS_IP>  argocd.juan-in-one.local
+```
+
+`<INGRESS_IP>` is the address OrbStack assigns to the ingress-nginx LoadBalancer — `kubectl get svc -n ingress-nginx` returns it.
+
+![Ingress LoadBalancer IP and hosts entries](img/ingress-hosts.png)
+
+<p align="center"><i>The same address in both places: the <code>EXTERNAL-IP</code> of the ingress-nginx Service, and the two <code>/etc/hosts</code> entries that point the local domains at it.</i></p>
+
+| URL | What it serves |
+|---|---|
+| `http://juan-in-one.local/` | The front end |
+| `http://juan-in-one.local/api/car-api/` | car-api |
+| `http://juan-in-one.local/api/sport-api/` | sport-api |
+| `http://juan-in-one.local/api/academy-api/` | academy-api |
+| `http://juan-in-one.local/grafana/` | Grafana |
+| `http://argocd.juan-in-one.local/` | Argo CD |
+
+The applications share one host and fan out by path prefix, which is what keeps the front end on relative URLs and out of CORS entirely. Argo CD gets its own subdomain because it is platform tooling, not part of the product.
+
+---
+
 ## Repositories
 
 | Repository | What it is |
