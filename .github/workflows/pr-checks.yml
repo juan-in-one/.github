@@ -1,0 +1,89 @@
+name: PR checks
+
+# Deliberadamente separado de fastapi-service-ci.yml: ese workflow es el
+# pipeline de entrega (build, escaneos que bloquean, firma, publicación) y
+# ya corre tanto en push como en PR. Este es solo para la PR — comprobaciones
+# que no tienen sentido fuera de una PR (comparar contra la rama base, o
+# exigir una convención de nombre de rama) y que no deberían mezclarse con
+# el pipeline que de verdad despliega.
+on:
+  workflow_call:
+    inputs:
+      service_name:
+        description: >
+          Nombre del servicio, en snake_case (ej. "car_api"). Se usa para
+          las credenciales de Postgres en el job de cobertura.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  branch-name:
+    # Fuerza la convención "solo se puede fusionar desde una rama feat/*" —
+    # la protección de rama de GitHub bloquea el push directo a main, pero
+    # no restringe el NOMBRE de la rama de origen de una PR; este job es la
+    # pieza que de verdad lo comprueba.
+    runs-on: ubuntu-latest
+    steps:
+      - name: La rama de origen debe seguir la convención feat/*
+        run: |
+          if [[ "${{ github.head_ref }}" != feat/* ]]; then
+            echo "::error::La rama '${{ github.head_ref }}' no sigue la convención feat/* — renómbrala antes de fusionar."
+            exit 1
+          fi
+          echo "OK: '${{ github.head_ref }}' sigue la convención."
+
+  dependency-review:
+    # Solo tiene sentido en una PR: compara las dependencias añadidas en el
+    # diff contra la rama base y bloquea si alguna trae una vulnerabilidad
+    # conocida — el escaneo de imagen (Trivy) ya cubre esto para lo que
+    # queda en la imagen final, esto cubre el momento en que se introduce.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  coverage:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ inputs.service_name }}
+          POSTGRES_PASSWORD: ${{ inputs.service_name }}
+          POSTGRES_DB: ${{ inputs.service_name }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.service_name }}"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Descargar el código del repo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias (app + test + cobertura)
+        run: pip install --quiet -r requirements-check.txt pytest-cov
+
+      - name: pytest con cobertura
+        env:
+          DATABASE_URL: postgresql+asyncpg://${{ inputs.service_name }}:${{ inputs.service_name }}@localhost:5432/${{ inputs.service_name }}
+        run: pytest --cov=app --cov-report=term
+
+      - name: Comentar la cobertura en la PR
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
