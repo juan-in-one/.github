@@ -1,3 +1,5 @@
+**English** · [Español](README.es.md)
+
 # Juan in One
 
 A production-shaped Kubernetes platform, built from scratch to learn every layer of it — from the Dockerfile to the admission controller that decides whether a Pod is allowed to run.
