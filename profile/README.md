@@ -240,15 +240,4 @@ Two remaining diffs were serialisation artefacts, not real drift: `spec.conversi
 
 ---
 
-## Roadmap
-
-Deliberately listed, because knowing what is missing is part of knowing what you built.
-
-- **Terraform and a cloud deployment.** Left out on purpose so far — the goal was learning the platform, not paying for one. Worth doing eventually as its own exercise.
-- **NetworkPolicies.** Build and admission are covered; runtime network segmentation is not. Kyverno can generate a default-deny policy per namespace.
-- **Cold-start ordering.** No Argo CD sync waves yet, and two secrets are still created by hand. Both only surface when rebuilding the cluster from zero.
-- **Renovate.** Dependency updates are manual.
-
----
-
 *Built and maintained by [Juan Álvarez Gayoso](https://github.com/juan-cloudops) — Cloud & DevOps Engineer.*

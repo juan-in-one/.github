@@ -238,15 +238,4 @@ Las dos diferencias que quedaban eran artefactos de serialización, no desviacio
 
 ---
 
-## Roadmap
-
-Listado a propósito, porque saber lo que falta es parte de saber lo que has construido.
-
-- **Terraform y un despliegue en cloud.** Fuera a propósito hasta ahora — el objetivo era aprender la plataforma, no pagar por una. Merece la pena hacerlo algún día como ejercicio propio.
-- **NetworkPolicies.** El build y la admisión están cubiertos; la segmentación de red en runtime no. Kyverno puede generar una política de deny por defecto en cada namespace.
-- **Orden de arranque en frío.** Todavía no hay sync waves de Argo CD, y dos secretos se siguen creando a mano. Las dos cosas solo se notan al levantar el clúster desde cero.
-- **Renovate.** Las actualizaciones de dependencias son manuales.
-
----
-
 *Construido y mantenido por [Juan Álvarez Gayoso](https://github.com/juan-cloudops) — Cloud & DevOps Engineer.*
