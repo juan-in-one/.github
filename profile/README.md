@@ -107,7 +107,7 @@ The applications share one host and fan out by path prefix, which is what keeps 
 | Repository | What it is |
 |---|---|
 | [gitops](https://github.com/juan-in-one/gitops) | Argo CD `Applications` and the whole platform layer. The source of truth for the cluster. |
-| [.github](https://github.com/juan-in-one/.github) | The reusable CI workflow shared by all three APIs. |
+| [.github](https://github.com/juan-in-one/.github) | The two reusable workflows — PR checks and the delivery pipeline — shared by the three APIs. |
 | [car-api](https://github.com/juan-in-one/car-api) | Vehicle maintenance — services, inspections, mileage. |
 | [sport-api](https://github.com/juan-in-one/sport-api) | Races and mountain challenges, done and pending. |
 | [academy-api](https://github.com/juan-in-one/academy-api) | Certifications and daily study goals with check-ins. |

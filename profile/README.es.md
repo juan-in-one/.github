@@ -106,7 +106,7 @@ Las aplicaciones comparten un único host y se reparten por prefijo de ruta, que
 | Repositorio | Qué es |
 |---|---|
 | [gitops](https://github.com/juan-in-one/gitops) | Las `Applications` de Argo CD y toda la capa de plataforma. La fuente de verdad del clúster. |
-| [.github](https://github.com/juan-in-one/.github) | El workflow de CI reutilizable que comparten las tres APIs. |
+| [.github](https://github.com/juan-in-one/.github) | Los dos workflows reutilizables — los checks de PR y la pipeline de entrega — que comparten las tres APIs. |
 | [car-api](https://github.com/juan-in-one/car-api) | Mantenimiento del coche — revisiones, ITV, kilómetros. |
 | [sport-api](https://github.com/juan-in-one/sport-api) | Carreras y retos de montaña, conseguidos y pendientes. |
 | [academy-api](https://github.com/juan-in-one/academy-api) | Certificaciones y objetivos diarios de estudio con check-ins. |
@@ -126,13 +126,31 @@ Las aplicaciones comparten un único host y se reparten por prefijo de ruta, que
 
 ## Cadena de suministro
 
-Todas las imágenes recorren la misma pipeline, y el clúster verifica el resultado antes de ejecutar nada.
+Dos workflows, y nunca corren a la vez. Abrir un PR lo valida; solo un merge a `main` puede publicar algo.
 
 ```mermaid
 flowchart LR
-    push["git push"] --> gate
+    pr["Pull request<br/>desde una rama feat/*"] --> checks
 
-    subgraph gate["CI — todo esto bloquea"]
+    subgraph checks["pr-checks — ningún paso de este fichero puede publicar nada"]
+        direction TB
+        a["branch-name<br/>obliga a feat/*"] --> b["lint"]
+        b --> c["secrets-scan<br/>Gitleaks, historial completo"]
+        c --> d["dependency-review<br/>solo dependencias nuevas"]
+        d --> e["build-sanity<br/>build + Trivy — sin login a GHCR en todo el fichero"]
+        e --> f["coverage<br/>pytest, comentado en el PR"]
+    end
+
+    checks -->|"todo en verde"| ready["Merge permitido"]
+```
+
+Fusionar es lo único que dispara la entrega de verdad:
+
+```mermaid
+flowchart LR
+    push["Merge a main"] --> gate
+
+    subgraph gate["ci — todo esto bloquea"]
         direction TB
         a["Ruff"] --> b["pytest<br/>Postgres real"]
         b --> c["Gitleaks<br/>historial completo"]
@@ -166,7 +184,7 @@ Un atacante que robe un token del registro puede publicar una imagen. Lo que no 
   <img src="img/ci-jobs.png" alt="Grafo de jobs del CI" width="700">
 </p>
 
-<p align="center"><i>Lint, tests y detección de secretos corren en paralelo; <code>build-and-push</code> solo arranca si los tres pasan. El DAST corre a la vez, contra la app levantada con un Postgres real.</i></p>
+<p align="center"><i>El grafo de jobs de <code>ci</code>, al fusionar a <code>main</code>: lint, tests y detección de secretos corren en paralelo; <code>build-and-push</code> solo arranca si los tres pasan. El DAST corre a la vez, contra la app levantada con un Postgres real.</i></p>
 
 ![Pasos de build-and-push](img/ci-build-and-push.png)
 
@@ -254,6 +272,16 @@ Llegar hasta ahí exigió además tres intentos de autenticación contra el regi
 El motor CEL activa `mutateDigest` por defecto, reescribiendo la imagen del Deployment a su digest resuelto en el momento de la admisión. Es una funcionalidad genuinamente útil — y dejó a car-api en `OutOfSync` permanente sin un solo commit en el repo de GitOps, porque Git decía `sha-61c886a` y el clúster decía `@sha256:...`.
 
 Está desactivada, con el motivo anotado al lado. Dos buenas prácticas en conflicto directo, resuelto a favor de la coherencia de GitOps; el problema de los tags mutables se ataja desplegando tags inmutables por commit.
+</details>
+
+<details>
+<summary><b>El PR y el merge son dos ficheros separados, no un workflow con un <code>if</code></b></summary>
+
+La primera versión tenía un único workflow reutilizable escuchando a `push` y a `pull_request`, con los pasos de publicar y firmar condicionados con `if: github.event_name == 'push'`. Funcionaba, pero en cada PR aparecía un job llamado `ci` que en realidad nunca podía publicar nada — confuso, y duplicaba lo que ya cubría un job de checks dedicado.
+
+Ahora `ci.yml` se dispara solo al hacer push a `main`, y `pr-checks.yml` solo en `pull_request`. Verificado con un PR real (solo corre `pr-checks`, `ci` aparece como `skipping`) y con un merge real justo después (lo contrario, `pr-checks` sale como `skipped`). `pr-checks` absorbió el lint, Gitleaks y un job de build-and-scan de comprobación, sin ningún paso de login a GHCR en todo el fichero — no desactivado por una condición, sino estructuralmente incapaz de publicar.
+
+Montar el job de cobertura en el PR destapó de paso tres bugs reales sin relación entre sí, en este orden: `python-coverage-comment-action` necesita `contents: write`, no solo `pull-requests: write`, para guardar su histórico en una rama huérfana — y el error que lanza en ese caso es un mensaje genérico de "permissions" que despista; `coverage.py` necesita `relative_files = true` en `pyproject.toml` o la action no consigue leer su propio informe; y la Dependency Review Action de GitHub exige activar `vulnerability-alerts` explícitamente en cada repositorio — no viene incluido al hacer público un repo, y no es el mismo ajuste que Secret Scanning ni que las actualizaciones de Dependabot.
 </details>
 
 <details>
