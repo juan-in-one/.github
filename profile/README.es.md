@@ -20,6 +20,18 @@ Tres microservicios en FastAPI y un front en React, entregados por GitOps, con u
 
 ---
 
+## Contenidos
+
+- [Por qué existe esto](#por-qué-existe-esto)
+- [Arquitectura](#arquitectura)
+- [Acceso](#acceso)
+- [Repositorios](#repositorios)
+- [Cadena de suministro](#cadena-de-suministro)
+- [Stack tecnológico](#stack-tecnológico)
+- [Decisiones de ingeniería](#decisiones-de-ingeniería)
+
+---
+
 ## Por qué existe esto
 
 Lo construí para aprender, y la forma del proyecto sale de ahí.
@@ -29,6 +41,8 @@ Las aplicaciones resuelven problemas reales míos — el mantenimiento de mi coc
 Corre entero en mi propia máquina, en un clúster de un solo nodo sobre OrbStack. Dejar la nube fuera fue una decisión: en parte para no pagar por un proyecto de aprendizaje, y en parte porque quería montarlo todo sobre hardware que es mío y puedo destripar. Esa restricción es justamente el punto — aquí no hay ningún servicio gestionado que aparezca haciendo clic. **Cada pieza de esta plataforma es una que instalé, configuré y depuré yo**: el stack de monitorización desde cero con Prometheus, Grafana, Loki, Tempo, Alloy y OpenTelemetry; los secretos con Vault y External Secrets; la entrega con Argo CD; y las herramientas de seguridad a lo largo de toda la pipeline.
 
 Lo que me propuse aprender: cómo se monta una pipeline de CI/CD y dónde va de verdad un gate; qué detecta y qué se le escapa a SAST, DAST, SCA, la detección de secretos y los SBOM; cómo se firma y se verifica una cadena de suministro de punta a punta; cómo se conectan realmente los tres pilares de la observabilidad; y cómo se comporta GitOps cuando algo falla. Casi todo lo que sé ahora salió de que las cosas se rompieran — y por eso las decisiones de más abajo están escritas como están.
+
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
 
 ---
 
@@ -71,6 +85,8 @@ Un único host de ingress reparte por prefijo de ruta. El front siempre llama a 
 
 <p align="center"><i>La plataforma completa bajo Argo CD: las tres APIs, el front y la capa de plataforma que los sostiene.</i></p>
 
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
+
 ---
 
 ## Acceso
@@ -99,6 +115,8 @@ Todo se sirve desde un único host de ingress-nginx, resuelto en local a través
 
 Las aplicaciones comparten un único host y se reparten por prefijo de ruta, que es lo que mantiene al front en URLs relativas y fuera del CORS por completo. Argo CD tiene su propio subdominio porque es herramienta de plataforma, no parte del producto.
 
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
+
 ---
 
 ## Repositorios
@@ -121,6 +139,8 @@ Las aplicaciones comparten un único host y se reparten por prefijo de ruta, que
 </table>
 
 <p align="center"><i>Las tres pantallas. El front es pequeño y sin alardes a propósito — existe para que la plataforma de debajo tenga algo real que entregar.</i></p>
+
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
 
 ---
 
@@ -196,19 +216,90 @@ Dos políticas vigilan la admisión, y entre las dos responden a las dos mitades
 
 <p align="center"><i>Tres rechazos, en directo. <b>El primero</b>: una imagen mía, de un registro permitido, pero nunca firmada — la tumba la política de firmas. <b>El segundo y el tercero</b>: <code>ubuntu</code> y <code>mongo</code> de Docker Hub — los tumba la política de registros, antes siquiera de plantearse las firmas. Nada de fuera de los registros aprobados entra, y nada mío se ejecuta si no lo firmó mi CI.</i></p>
 
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
+
 ---
 
-## Stack
+## Stack tecnológico
 
-| Capa | Herramientas |
-|---|---|
-| **Orquestación** | Kubernetes, Helm, ingress-nginx, metrics-server, HPA |
-| **GitOps** | Argo CD, App of Apps, sync automático con prune y self-heal |
-| **CI/CD** | Workflows reutilizables de GitHub Actions, GHCR |
-| **Seguridad** | Ruff, Semgrep, Gitleaks, Trivy, OWASP ZAP, Cosign, Syft, Kyverno |
-| **Secretos** | HashiCorp Vault, External Secrets Operator |
-| **Observabilidad** | Prometheus, Loki, Tempo, Alloy, Grafana, OpenTelemetry |
-| **Aplicaciones** | FastAPI, SQLAlchemy async, PostgreSQL, React 19, TypeScript, Vite |
+<table>
+<tr>
+<td valign="top" width="50%">
+
+### 🧱 Plataforma
+
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-0F1689?logo=helm&logoColor=white)
+![ingress--nginx](https://img.shields.io/badge/ingress--nginx-269539?logo=nginx&logoColor=white)
+![HPA](https://img.shields.io/badge/HPA-autoscaling-326CE5)
+
+### 🔁 GitOps
+
+![Argo CD](https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white)
+![App of Apps](https://img.shields.io/badge/App%20of%20Apps-patr%C3%B3n-EF7B4D)
+
+### 🔑 Secretos
+
+![Vault](https://img.shields.io/badge/HashiCorp%20Vault-000000?logo=vault&logoColor=FFEC6E)
+![External Secrets Operator](https://img.shields.io/badge/External%20Secrets%20Operator-6B46C1)
+
+### 📊 Observabilidad
+
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
+![Loki](https://img.shields.io/badge/Loki-F46800)
+![Tempo](https://img.shields.io/badge/Tempo-F46800)
+![Grafana Alloy](https://img.shields.io/badge/Grafana%20Alloy-F46800)
+![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-000000?logo=opentelemetry&logoColor=white)
+
+</td>
+<td valign="top" width="50%">
+
+### 🛡️ DevSecOps
+
+**SAST** — análisis estático
+<br>![Semgrep](https://img.shields.io/badge/Semgrep-1B2532)
+![Ruff](https://img.shields.io/badge/Ruff-D7FF64)
+![oxlint](https://img.shields.io/badge/oxlint-181717)
+
+**SCA** — escaneo de dependencias e imágenes
+<br>![Trivy](https://img.shields.io/badge/Trivy-1904DA)
+![Dependency Review](https://img.shields.io/badge/Dependency%20Review-2F855A?logo=github&logoColor=white)
+
+**Detección de secretos**
+<br>![Gitleaks](https://img.shields.io/badge/Gitleaks-EE5A00)
+![GitHub Secret Scanning](https://img.shields.io/badge/GitHub%20Secret%20Scanning-181717?logo=github&logoColor=white)
+
+**DAST**
+<br>![OWASP ZAP](https://img.shields.io/badge/OWASP%20ZAP-8C1A1A)
+
+**Cadena de suministro**
+<br>![Cosign](https://img.shields.io/badge/Cosign-keyless-2F855A)
+![Syft](https://img.shields.io/badge/Syft-SBOM-2F855A)
+![Kyverno](https://img.shields.io/badge/Kyverno-Deny-1D4ED8)
+
+**CI/CD**
+<br>![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![GHCR](https://img.shields.io/badge/GHCR-181717?logo=github&logoColor=white)
+
+</td>
+</tr>
+</table>
+
+### 💻 Aplicaciones
+
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white)
+![React](https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-6E9F18?logo=vitest&logoColor=white)
+
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
+
+---
 
 ### Observabilidad, montada desde cero
 
@@ -223,6 +314,8 @@ Dos políticas vigilan la admisión, y entre las dos responden a las dos mitades
 ![Traza distribuida en Tempo](img/tempo-trace.png)
 
 <p align="center"><i>Una única petición a través de car-api, span a span: recepción HTTP, conexión, INSERT, SELECT, respuesta. OpenTelemetry instrumenta la app directamente, sin colector intermedio.</i></p>
+
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
 
 ---
 
@@ -291,6 +384,8 @@ Los CRDs de Kyverno llevan dentro todo su esquema de validación, lo que desbord
 
 Las dos diferencias que quedaban eran artefactos de serialización, no desviaciones reales: `spec.conversion`, que el API server rellena por defecto con `{strategy: None}`, y un mapa vacío `labels: {}` que Kubernetes omite por completo. Ambas se verificaron campo a campo con `argocd app diff` antes de añadirlas a `ignoreDifferences` — nunca a ciegas.
 </details>
+
+<p align="right">(<a href="#contenidos">volver arriba</a>)</p>
 
 ---
 
