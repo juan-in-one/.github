@@ -386,6 +386,14 @@ Kyverno's CRDs embed their full validation schema, which overflows the 256 KB an
 Two remaining diffs were serialisation artefacts, not real drift: `spec.conversion`, which the API server defaults to `{strategy: None}`, and an empty `labels: {}` map that Kubernetes drops entirely. Both were verified field by field with `argocd app diff` before being added to `ignoreDifferences` — never ignored blindly.
 </details>
 
+<details>
+<summary><b>What OrbStack's Kubernetes actually is</b></summary>
+
+Curious enough to check rather than assume: `kubectl get nodes` reports `v1.35.6+orb1` — a custom build of upstream Kubernetes, neither k3s (`+k3s1`) nor kind (which runs "nodes" as containers sharing the host's own kernel). The node's kernel is `7.0.14-orbstack-...`, OrbStack's own lightweight Linux build running in a VM on top of Apple's Virtualization framework rather than a heavier hypervisor.
+
+Two components are borrowed straight from the k3s ecosystem rather than reinvented: `rancher/klipper-lb` backs every `LoadBalancer` Service, and `rancher/local-path-provisioner` backs the default `StorageClass`. There is no `kube-proxy` Pod anywhere in `kube-system` — whatever handles Service routing is built into the runtime itself, not a separate static Pod.
+</details>
+
 <p align="right">(<a href="#contents">back to top</a>)</p>
 
 ---
