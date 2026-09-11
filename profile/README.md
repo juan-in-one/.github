@@ -20,6 +20,18 @@ Three FastAPI microservices and a React front end, delivered by GitOps, with a s
 
 ---
 
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Architecture](#architecture)
+- [Access](#access)
+- [Repositories](#repositories)
+- [Supply chain](#supply-chain)
+- [Tech stack](#tech-stack)
+- [Engineering decisions](#engineering-decisions)
+
+---
+
 ## Why this exists
 
 I built this to learn, and the shape of the project follows from that.
@@ -29,6 +41,8 @@ The applications solve real problems of mine — my car's servicing, my races, m
 It runs entirely on my own machine, on a single-node OrbStack cluster. Leaving the cloud out was deliberate: partly to keep a learning project off a cloud bill, and partly because I wanted the whole thing on hardware I own and can take apart. That constraint is the point — nothing here is a managed service I clicked into existence. **Every piece of this platform is one I installed, configured and debugged myself**: the monitoring stack from zero with Prometheus, Grafana, Loki, Tempo, Alloy and OpenTelemetry; secrets with Vault and External Secrets; delivery with Argo CD; the security tooling across the whole pipeline.
 
 What I set out to learn: how a CI/CD pipeline is put together and where a gate genuinely belongs; what SAST, DAST, SCA, secret scanning and SBOMs each catch and what they miss; how a software supply chain is signed and verified end to end; how the three pillars of observability actually get wired up; and how GitOps behaves when something goes wrong. Most of what I know now came from things breaking — which is why the decisions below are written up the way they are.
+
+<p align="right">(<a href="#contents">back to top</a>)</p>
 
 ---
 
@@ -72,6 +86,8 @@ A single ingress host fans out by path prefix. The front end only ever calls rel
 
 <p align="center"><i>The full platform under Argo CD: three APIs, the front end, and the platform layer that supports them.</i></p>
 
+<p align="right">(<a href="#contents">back to top</a>)</p>
+
 ---
 
 ## Access
@@ -100,6 +116,8 @@ Everything is served by a single ingress-nginx host, resolved locally through `/
 
 The applications share one host and fan out by path prefix, which is what keeps the front end on relative URLs and out of CORS entirely. Argo CD gets its own subdomain because it is platform tooling, not part of the product.
 
+<p align="right">(<a href="#contents">back to top</a>)</p>
+
 ---
 
 ## Repositories
@@ -122,6 +140,8 @@ The applications share one host and fan out by path prefix, which is what keeps 
 </table>
 
 <p align="center"><i>The three screens. The front end is small and unshowy on purpose — it exists so the platform underneath has something real to deliver.</i></p>
+
+<p align="right">(<a href="#contents">back to top</a>)</p>
 
 ---
 
@@ -197,20 +217,90 @@ Two policies guard admission, and between them they answer both halves of the qu
 
 <p align="center"><i>Three refusals, live. <b>First</b>: one of my own images, from an allowed registry, but never signed — rejected by the signature policy. <b>Second and third</b>: <code>ubuntu</code> and <code>mongo</code> from Docker Hub — rejected by the registry policy before signatures are even considered. Nothing from outside the approved registries gets in, and nothing of mine runs unless my CI signed it.</i></p>
 
+<p align="right">(<a href="#contents">back to top</a>)</p>
+
 ---
 
-## Stack
+## Tech stack
 
-| Layer | Tools |
-|---|---|
-| **Orchestration** | Kubernetes, Helm, ingress-nginx, metrics-server, HPA |
-| **GitOps** | Argo CD, App of Apps, automated sync with prune and self-heal |
-| **CI/CD** | GitHub Actions reusable workflows, GHCR |
-| **Security** | Ruff, Semgrep, Gitleaks, Trivy, OWASP ZAP, Cosign, Syft, Kyverno |
-| **Secrets** | HashiCorp Vault, External Secrets Operator |
-| **Observability** | Prometheus, Loki, Tempo, Alloy, Grafana, OpenTelemetry |
-| **Applications** | FastAPI, SQLAlchemy async, PostgreSQL, React 19, TypeScript, Vite |
+<table>
+<tr>
+<td valign="top" width="50%">
 
+### 🧱 Platform
+
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-0F1689?logo=helm&logoColor=white)
+![ingress--nginx](https://img.shields.io/badge/ingress--nginx-269539?logo=nginx&logoColor=white)
+![HPA](https://img.shields.io/badge/HPA-autoscaling-326CE5)
+
+### 🔁 GitOps
+
+![Argo CD](https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white)
+![App of Apps](https://img.shields.io/badge/App%20of%20Apps-pattern-EF7B4D)
+
+### 🔑 Secrets
+
+![Vault](https://img.shields.io/badge/HashiCorp%20Vault-000000?logo=vault&logoColor=FFEC6E)
+![External Secrets Operator](https://img.shields.io/badge/External%20Secrets%20Operator-6B46C1)
+
+### 📊 Observability
+
+![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)
+![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)
+![Loki](https://img.shields.io/badge/Loki-F46800)
+![Tempo](https://img.shields.io/badge/Tempo-F46800)
+![Grafana Alloy](https://img.shields.io/badge/Grafana%20Alloy-F46800)
+![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-000000?logo=opentelemetry&logoColor=white)
+
+</td>
+<td valign="top" width="50%">
+
+### 🛡️ DevSecOps
+
+**SAST** — static analysis
+<br>![Semgrep](https://img.shields.io/badge/Semgrep-1B2532)
+![Ruff](https://img.shields.io/badge/Ruff-D7FF64)
+![oxlint](https://img.shields.io/badge/oxlint-181717)
+
+**SCA** — dependency & image scanning
+<br>![Trivy](https://img.shields.io/badge/Trivy-1904DA)
+![Dependency Review](https://img.shields.io/badge/Dependency%20Review-2F855A?logo=github&logoColor=white)
+
+**Secret scanning**
+<br>![Gitleaks](https://img.shields.io/badge/Gitleaks-EE5A00)
+![GitHub Secret Scanning](https://img.shields.io/badge/GitHub%20Secret%20Scanning-181717?logo=github&logoColor=white)
+
+**DAST**
+<br>![OWASP ZAP](https://img.shields.io/badge/OWASP%20ZAP-8C1A1A)
+
+**Software supply chain**
+<br>![Cosign](https://img.shields.io/badge/Cosign-keyless-2F855A)
+![Syft](https://img.shields.io/badge/Syft-SBOM-2F855A)
+![Kyverno](https://img.shields.io/badge/Kyverno-Deny-1D4ED8)
+
+**CI/CD**
+<br>![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![GHCR](https://img.shields.io/badge/GHCR-181717?logo=github&logoColor=white)
+
+</td>
+</tr>
+</table>
+
+### 💻 Applications
+
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white)
+![React](https://img.shields.io/badge/React%2019-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+![Vitest](https://img.shields.io/badge/Vitest-6E9F18?logo=vitest&logoColor=white)
+
+<p align="right">(<a href="#contents">back to top</a>)</p>
+
+---
 
 ### Observability, built from scratch
 
@@ -225,6 +315,8 @@ Two policies guard admission, and between them they answer both halves of the qu
 ![Tempo distributed trace](img/tempo-trace.png)
 
 <p align="center"><i>A single request through car-api, span by span: HTTP receive, connection, INSERT, SELECT, response. OpenTelemetry instruments the app directly, with no intermediate collector.</i></p>
+
+<p align="right">(<a href="#contents">back to top</a>)</p>
 
 ---
 
@@ -293,6 +385,8 @@ Kyverno's CRDs embed their full validation schema, which overflows the 256 KB an
 
 Two remaining diffs were serialisation artefacts, not real drift: `spec.conversion`, which the API server defaults to `{strategy: None}`, and an empty `labels: {}` map that Kubernetes drops entirely. Both were verified field by field with `argocd app diff` before being added to `ignoreDifferences` — never ignored blindly.
 </details>
+
+<p align="right">(<a href="#contents">back to top</a>)</p>
 
 ---
 
